@@ -1,0 +1,11 @@
+# Python 3.11 is recommended. Install with: python -m pip install -r requirements.txt
+PyMuPDF>=1.23.0
+Pillow>=10.0.0
+python-docx>=1.1.0
+paddlepaddle>=2.5.0
+paddleocr>=2.7.0
+opencv-python>=4.8.0
+python-dotenv>=1.0.0
+rich>=13.0.0
+# PaddlePaddle 2.6.x / PaddleOCR 2.7.x require the legacy protobuf runtime.
+protobuf>=3.20.2,<=3.20.2
