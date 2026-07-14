@@ -1,4 +1,4 @@
-"""DOCX exporter enforcing Unicode Times New Roman 13pt output."""
+"""DOCX exporter enforcing Unicode Times New Roman 13pt output with improved image positioning."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
 
+from src.core.logger import log
 from src.pdf.pdf_processor import ContentBlock, PageContent
 
 
@@ -22,25 +23,33 @@ class DocumentExporter:
     FONT_SIZE = Pt(13)
 
     def export(self, pages: list[PageContent], destination: Path, include_page_reference: bool = False) -> Path:
+        """Export pages to a DOCX file with proper formatting and image positioning."""
         document = Document()
         self._set_normal_style(document)
+        log.info("Exporting %d pages to %s", len(pages), destination)
         for index, page in enumerate(pages):
             if index:
                 document.add_section(WD_SECTION.NEW_PAGE)
             self._configure_page(document.sections[-1], page)
             self._write_page(document, page, include_page_reference)
+            log.info("Exported page %d/%d", index + 1, len(pages))
         destination.parent.mkdir(parents=True, exist_ok=True)
         document.save(destination)
+        log.info("Successfully saved: %s", destination)
         return destination
 
     def _set_normal_style(self, document: Document) -> None:
+        """Configure the Normal paragraph style for Times New Roman 13pt Unicode."""
         style = document.styles["Normal"]
         style.font.name = self.FONT_NAME
         style.font.size = self.FONT_SIZE
+        # Ensure East Asian font is also set for Vietnamese text
         style._element.rPr.rFonts.set(qn("w:eastAsia"), self.FONT_NAME)
+        style.font.encoding = "UTF-8"
 
     @staticmethod
     def _configure_page(section, page: PageContent) -> None:
+        """Set page dimensions and margins based on PDF page size."""
         section.page_width = Pt(page.width)
         section.page_height = Pt(page.height)
         section.top_margin = Inches(0.55)
@@ -49,6 +58,7 @@ class DocumentExporter:
         section.right_margin = Inches(0.65)
 
     def _write_page(self, document: Document, page: PageContent, include_page_reference: bool) -> None:
+        """Write all blocks (text and images) to the page."""
         for block in page.blocks:
             if block.kind == "image" and block.image_path:
                 self._add_image(document, block, page)
@@ -61,14 +71,19 @@ class DocumentExporter:
             document.add_picture(str(page.rendered_page), width=Inches(6.2))
 
     def _add_text(self, document: Document, block: ContentBlock, page: PageContent) -> None:
+        """Add a text block with proper formatting and alignment."""
         paragraph = document.add_paragraph()
         paragraph.paragraph_format.space_after = Pt(3)
         paragraph.paragraph_format.line_spacing = 1.0
+        
+        # Determine alignment based on block position
         width = block.bbox[2] - block.bbox[0]
         if width > page.width * 0.72:
             paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         elif block.bbox[0] > page.width * 0.28:
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        
+        # Add text spans with proper Unicode encoding
         for span in block.spans:
             run = paragraph.add_run(span.text)
             run.font.name = self.FONT_NAME
@@ -76,21 +91,36 @@ class DocumentExporter:
             run._element.rPr.rFonts.set(qn("w:eastAsia"), self.FONT_NAME)
             run.bold = span.bold
             run.italic = span.italic
+        
         self._set_keep_lines(paragraph)
 
     @staticmethod
     def _add_image(document: Document, block: ContentBlock, page: PageContent) -> None:
+        """Add an image with proper positioning and sizing."""
+        if not block.image_path or not block.image_path.exists():
+            log.warning("Image path not found: %s", block.image_path)
+            return
+        
         available_width = page.width - 2 * 0.65 * 72
         image_width = max(36, min(block.bbox[2] - block.bbox[0], available_width))
+        
         paragraph = document.add_paragraph()
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.paragraph_format.space_after = Pt(6)
+        
         try:
             paragraph.add_run().add_picture(str(block.image_path), width=Pt(image_width))
-        except UnrecognizedImageError:
+            log.info("Added image: %s", block.image_path.name)
+        except UnrecognizedImageError as exc:
+            log.warning("Cannot embed image %s: %s", block.image_path, exc)
             paragraph.add_run("[Không thể nhúng ảnh gốc; xem PDF để đối chiếu]").italic = True
+        except Exception as exc:
+            log.error("Error adding image %s: %s", block.image_path, exc)
+            paragraph.add_run("[Lỗi khi nhúng ảnh]").italic = True
 
     @staticmethod
     def _set_keep_lines(paragraph) -> None:
+        """Prevent paragraph orphans by keeping lines together."""
         properties = paragraph._p.get_or_add_pPr()
         keep_next = OxmlElement("w:keepNext")
         properties.append(keep_next)
